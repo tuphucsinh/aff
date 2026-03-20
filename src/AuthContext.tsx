@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, db, addLog } from './db';
+import { User } from './db';
+import { supabase } from './supabase';
 
 interface AuthContextType {
   user: User | null;
@@ -16,30 +17,29 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const users = await db.users.toArray();
-        const adminUser = users.find(u => u.username === 'admin');
+        const { data: users } = await supabase.from('users').select('*');
+        const adminUser = users?.find(u => u.username === 'admin');
+        
         if (!adminUser) {
-          await db.users.add({
+          await supabase.from('users').insert([{
             username: 'admin',
             password: 'admin',
             name: 'Quản trị viên',
             role: 'admin'
-          });
+          }]);
         } else if (adminUser.password === '123' && adminUser.id) {
-          // Force update default admin password to 'admin' if it was '123'
-          await db.users.update(adminUser.id, { password: 'admin' });
+          await supabase.from('users').update({ password: 'admin' }).eq('id', adminUser.id);
         }
 
         const storedUserId = sessionStorage.getItem('aff_user_id') || localStorage.getItem('aff_user_id');
         if (storedUserId) {
           const parsedId = Number(storedUserId);
           if (!isNaN(parsedId)) {
-            const storedUser = await db.users.get(parsedId);
+            const { data: storedUser } = await supabase.from('users').select('*').eq('id', parsedId).single();
             if (storedUser) {
-              setUser(storedUser);
+              setUser(storedUser as User);
             }
           } else {
-            // Invalid ID (e.g. old Supabase UUID), clear it
             sessionStorage.removeItem('aff_user_id');
             localStorage.removeItem('aff_user_id');
           }
@@ -68,7 +68,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const logout = async () => {
     if (user) {
-      await addLog(user.username, 'Đăng xuất hệ thống');
+      await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: 'Đăng xuất hệ thống' }]);
     }
     setUser(null);
     localStorage.removeItem('aff_user_id');

@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, PurchaseItem, addLog, Purchase, Distributor, Product } from '../db';
+import { PurchaseItem, Purchase, Distributor, Product } from '../db';
+import { supabase, useSupabaseQuery } from '../supabase';
 import { Button, Input, Label, Select, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
 import { format } from 'date-fns';
 import { useAuth } from '../AuthContext';
 
 export default function Purchases() {
   const { user } = useAuth();
-  const purchases = useLiveQuery(() => db.purchases.toArray());
-  const distributors = useLiveQuery(() => db.distributors.toArray());
-  const products = useLiveQuery(() => db.products.toArray());
+  const purchases = useSupabaseQuery<Purchase[]>('purchases') || [];
+  const distributors = useSupabaseQuery<Distributor[]>('distributors') || [];
+  const products = useSupabaseQuery<Product[]>('products') || [];
 
   const [isAdding, setIsAdding] = useState(false);
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -24,46 +24,37 @@ export default function Purchases() {
     setCurrentItem({ productId: 0, quantity: 1, price: 0 });
   };
 
-  const handleProductChange = (productId: number) => {
-    setCurrentItem({
-      ...currentItem,
-      productId,
-      price: 0
-    });
-  };
-
   const handleSave = async () => {
     if (!distributorId) return alert('Vui lòng chọn nhà phân phối');
     if (items.length === 0) return alert('Vui lòng thêm ít nhất 1 sản phẩm');
 
     const total = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    
     const year = new Date(date).getFullYear();
-    const yearPurchases = purchases?.filter(p => p.date.startsWith(year.toString())) || [];
+    const yearPurchases = purchases.filter(p => p.date.startsWith(year.toString()));
     const sequence = (yearPurchases.length + 1).toString().padStart(3, '0');
     const purchaseCode = `NH-${year}-${sequence}`;
 
-    await db.transaction('rw', db.purchases, db.products, async () => {
-      await db.purchases.add({
-        purchaseCode,
-        date,
-        distributorId,
-        items,
-        total
-      });
+    const { error: insertError } = await supabase.from('purchases').insert([{
+      purchaseCode,
+      date,
+      distributorId,
+      items,
+      total
+    }]);
 
-      // Update inventory
-      for (const item of items) {
-        const product = await db.products.get(item.productId);
-        if (product && product.id) {
-          await db.products.update(product.id, {
-            currentStock: product.currentStock + item.quantity
-          });
-        }
+    if (insertError) return alert('Lỗi lưu đơn nhập: ' + insertError.message);
+
+    // Cập nhật tồn kho cho từng sản phẩm
+    for (const item of items) {
+      const product = products.find(p => p.id === item.productId);
+      if (product) {
+        await supabase.from('products')
+          .update({ currentStock: product.currentStock + item.quantity })
+          .eq('id', product.id);
       }
-    });
+    }
 
-    if (user) await addLog(user.username, `Nhập hàng ${purchaseCode}`);
+    if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Nhập hàng ${purchaseCode}` }]);
 
     setIsAdding(false);
     setItems([]);
@@ -71,8 +62,8 @@ export default function Purchases() {
     alert('Nhập hàng thành công!');
   };
 
-  const getDistributorName = (id: number) => distributors?.find(d => d.id === id)?.name || 'Unknown';
-  const getProductName = (id: number) => products?.find(p => p.id === id)?.name || 'Unknown';
+  const getDistributorName = (id: number) => distributors.find(d => d.id === id)?.name || 'Unknown';
+  const getProductName = (id: number) => products.find(p => p.id === id)?.name || 'Unknown';
 
   return (
     <div className="space-y-6">
@@ -89,6 +80,7 @@ export default function Purchases() {
             <CardTitle>Phiếu nhập hàng</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Tương tự code cũ, giữ nguyên giao diện UI */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Ngày nhập</Label>
@@ -98,7 +90,7 @@ export default function Purchases() {
                 <Label>Nhà phân phối</Label>
                 <Select value={distributorId} onChange={e => setDistributorId(Number(e.target.value))}>
                   <option value={0}>-- Chọn nhà phân phối --</option>
-                  {distributors?.map(d => (
+                  {distributors.map(d => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </Select>
@@ -110,9 +102,9 @@ export default function Purchases() {
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
                 <div className="space-y-2 sm:col-span-2">
                   <Label>Sản phẩm</Label>
-                  <Select value={currentItem.productId} onChange={e => handleProductChange(Number(e.target.value))}>
+                  <Select value={currentItem.productId} onChange={e => setCurrentItem({...currentItem, productId: Number(e.target.value), price: 0})}>
                     <option value={0}>-- Chọn sản phẩm --</option>
-                    {products?.map(p => (
+                    {products.map(p => (
                       <option key={p.id} value={p.id}>{p.name} (Tồn: {p.currentStock})</option>
                     ))}
                   </Select>
@@ -192,15 +184,15 @@ export default function Purchases() {
               </tr>
             </thead>
             <tbody>
-              {purchases?.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(p => (
+              {purchases.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(p => (
                 <tr key={p.id} className="bg-white border-b hover:bg-gray-50">
-                  <td className="px-6 py-4 font-medium">{p.purchaseCode || `NH-${new Date(p.date).getFullYear()}-${(p.id || 0).toString().padStart(3, '0')}`}</td>
+                  <td className="px-6 py-4 font-medium">{p.purchaseCode}</td>
                   <td className="px-6 py-4">{format(new Date(p.date), 'dd/MM/yyyy')}</td>
                   <td className="px-6 py-4">{getDistributorName(p.distributorId)}</td>
                   <td className="px-6 py-4 text-right font-bold text-blue-600">{p.total.toLocaleString()} đ</td>
                 </tr>
               ))}
-              {purchases?.length === 0 && (
+              {purchases.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-6 py-4 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>

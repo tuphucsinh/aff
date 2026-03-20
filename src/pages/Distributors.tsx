@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Distributor, addLog } from '../db';
+import { Distributor } from '../db';
+import { supabase, useSupabaseQuery } from '../supabase';
 import { Button, Input, Label, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
 import { useAuth } from '../AuthContext';
 
 export default function Distributors() {
   const { user } = useAuth();
-  const distributors = useLiveQuery(() => db.distributors.toArray());
+  const distributors = useSupabaseQuery<Distributor[]>('distributors') || [];
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<Distributor>({ name: '', address: '', phone: '' });
@@ -15,11 +15,13 @@ export default function Distributors() {
     if (!formData.name) return alert('Vui lòng nhập tên nhà phân phối');
     
     if (editingId) {
-      await db.distributors.update(editingId, formData);
-      if (user) await addLog(user.username, `Cập nhật nhà phân phối ${formData.name}`);
+      const { error } = await supabase.from('distributors').update(formData).eq('id', editingId);
+      if (error) return alert('Lỗi cập nhật: ' + error.message);
+      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Cập nhật NPP ${formData.name}` }]);
     } else {
-      await db.distributors.add(formData);
-      if (user) await addLog(user.username, `Thêm nhà phân phối ${formData.name}`);
+      const { error } = await supabase.from('distributors').insert([formData]);
+      if (error) return alert('Lỗi thêm mới: ' + error.message);
+      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Thêm NPP ${formData.name}` }]);
     }
     
     setIsAdding(false);
@@ -41,11 +43,11 @@ export default function Distributors() {
     }, 10);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number, name: string) => {
     if (confirm('Bạn có chắc muốn xóa nhà phân phối này?')) {
-      const distributor = await db.distributors.get(id);
-      await db.distributors.delete(id);
-      if (user && distributor) await addLog(user.username, `Xóa nhà phân phối ${distributor.name}`);
+      const { error } = await supabase.from('distributors').delete().eq('id', id);
+      if (error) return alert('Lỗi xóa: ' + error.message);
+      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Xóa NPP ${name}` }]);
     }
   };
 
@@ -103,18 +105,18 @@ export default function Distributors() {
               </tr>
             </thead>
             <tbody>
-              {distributors?.map(d => (
+              {distributors.map(d => (
                 <tr key={d.id} className="bg-white border-b hover:bg-gray-50">
                   <td className="px-6 py-4 font-medium">{d.name}</td>
                   <td className="px-6 py-4">{d.phone}</td>
                   <td className="px-6 py-4">{d.address}</td>
                   <td className="px-6 py-4 text-right space-x-2">
                     <Button variant="outline" size="sm" onClick={() => handleEdit(d)}>Sửa</Button>
-                    <Button variant="destructive" size="sm" onClick={() => d.id && handleDelete(d.id)}>Xóa</Button>
+                    <Button variant="destructive" size="sm" onClick={() => d.id && handleDelete(d.id, d.name)}>Xóa</Button>
                   </td>
                 </tr>
               ))}
-              {distributors?.length === 0 && (
+              {distributors.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-6 py-4 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>

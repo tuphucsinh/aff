@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Customer, addLog } from '../db';
+import { Customer } from '../db';
+import { supabase, useSupabaseQuery } from '../supabase';
 import { Button, Input, Label, Select, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
 import { useAuth } from '../AuthContext';
 
 export default function Customers() {
   const { user } = useAuth();
-  const customers = useLiveQuery(() => db.customers.toArray());
+  const customers = useSupabaseQuery<Customer[]>('customers') || [];
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<Customer>({ name: '', type: 'lẻ', region: '', address: '', phone: '' });
@@ -15,11 +15,13 @@ export default function Customers() {
     if (!formData.name) return alert('Vui lòng nhập tên khách hàng');
     
     if (editingId) {
-      await db.customers.update(editingId, formData);
-      if (user) await addLog(user.username, `Cập nhật khách hàng ${formData.name}`);
+      const { error } = await supabase.from('customers').update(formData).eq('id', editingId);
+      if (error) return alert('Lỗi cập nhật: ' + error.message);
+      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Cập nhật khách hàng ${formData.name}` }]);
     } else {
-      await db.customers.add(formData);
-      if (user) await addLog(user.username, `Thêm khách hàng ${formData.name}`);
+      const { error } = await supabase.from('customers').insert([formData]);
+      if (error) return alert('Lỗi thêm mới: ' + error.message);
+      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Thêm khách hàng ${formData.name}` }]);
     }
     
     setIsAdding(false);
@@ -43,11 +45,11 @@ export default function Customers() {
     }, 10);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number, name: string) => {
     if (confirm('Bạn có chắc muốn xóa khách hàng này?')) {
-      const customer = await db.customers.get(id);
-      await db.customers.delete(id);
-      if (user && customer) await addLog(user.username, `Xóa khách hàng ${customer.name}`);
+      const { error } = await supabase.from('customers').delete().eq('id', id);
+      if (error) return alert('Lỗi xóa: ' + error.message);
+      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Xóa khách hàng ${name}` }]);
     }
   };
 
@@ -118,7 +120,7 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {customers?.map(c => (
+              {customers.map(c => (
                 <tr key={c.id} className="bg-white border-b hover:bg-gray-50">
                   <td className="px-6 py-4 font-medium">{c.name}</td>
                   <td className="px-6 py-4">{c.type === 'sỉ' ? 'Sỉ' : 'Lẻ'}</td>
@@ -127,11 +129,11 @@ export default function Customers() {
                   <td className="px-6 py-4">{c.address}</td>
                   <td className="px-6 py-4 text-right space-x-2">
                     <Button variant="outline" size="sm" onClick={() => handleEdit(c)}>Sửa</Button>
-                    <Button variant="destructive" size="sm" onClick={() => c.id && handleDelete(c.id)}>Xóa</Button>
+                    <Button variant="destructive" size="sm" onClick={() => c.id && handleDelete(c.id, c.name)}>Xóa</Button>
                   </td>
                 </tr>
               ))}
-              {customers?.length === 0 && (
+              {customers.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-4 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>
