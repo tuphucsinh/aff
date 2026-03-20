@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User } from './db';
-import { supabase } from './supabase';
+import { User, db, addLog } from './db';
 
 interface AuthContextType {
   user: User | null;
@@ -17,31 +16,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const { data: users } = await supabase.from('users').select('*');
-        const adminUser = users?.find(u => u.username === 'admin');
-        
-        if (!adminUser) {
-          await supabase.from('users').insert([{
+        const userCount = await db.users.count();
+        if (userCount === 0) {
+          await db.users.add({
             username: 'admin',
-            password: 'admin',
+            password: '123',
             name: 'Quản trị viên',
             role: 'admin'
-          }]);
-        } else if (adminUser.password === '123' && adminUser.id) {
-          await supabase.from('users').update({ password: 'admin' }).eq('id', adminUser.id);
+          });
         }
 
         const storedUserId = sessionStorage.getItem('aff_user_id') || localStorage.getItem('aff_user_id');
         if (storedUserId) {
-          const parsedId = Number(storedUserId);
-          if (!isNaN(parsedId)) {
-            const { data: storedUser } = await supabase.from('users').select('*').eq('id', parsedId).single();
-            if (storedUser) {
-              setUser(storedUser as User);
-            }
-          } else {
-            sessionStorage.removeItem('aff_user_id');
-            localStorage.removeItem('aff_user_id');
+          const storedUser = await db.users.get(Number(storedUserId));
+          if (storedUser) {
+            setUser(storedUser);
           }
         }
       } catch (error) {
@@ -68,7 +57,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const logout = async () => {
     if (user) {
-      await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: 'Đăng xuất hệ thống' }]);
+      await addLog(user.username, 'Đăng xuất hệ thống');
     }
     setUser(null);
     localStorage.removeItem('aff_user_id');

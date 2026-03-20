@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Customer } from '../db';
-import { supabase, useSupabaseQuery } from '../supabase';
+import { useSupabaseQuery } from '../supabase';
+import { db, Customer, addLog } from '../db';
 import { Button, Input, Label, Select, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
 import { useAuth } from '../AuthContext';
 
 export default function Customers() {
   const { user } = useAuth();
-  const customers = useSupabaseQuery<Customer[]>('customers') || [];
+  const customers = useSupabaseQuery<Customer[]>('customers');
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<Customer>({ name: '', type: 'lẻ', region: '', address: '', phone: '' });
@@ -15,13 +15,11 @@ export default function Customers() {
     if (!formData.name) return alert('Vui lòng nhập tên khách hàng');
     
     if (editingId) {
-      const { error } = await supabase.from('customers').update(formData).eq('id', editingId);
-      if (error) return alert('Lỗi cập nhật: ' + error.message);
-      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Cập nhật khách hàng ${formData.name}` }]);
+      await db.customers.update(editingId, formData);
+      if (user) await addLog(user.username, `Cập nhật khách hàng ${formData.name}`);
     } else {
-      const { error } = await supabase.from('customers').insert([formData]);
-      if (error) return alert('Lỗi thêm mới: ' + error.message);
-      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Thêm khách hàng ${formData.name}` }]);
+      await db.customers.add(formData);
+      if (user) await addLog(user.username, `Thêm khách hàng ${formData.name}`);
     }
     
     setIsAdding(false);
@@ -39,17 +37,14 @@ export default function Customers() {
     });
     setEditingId(customer.id!);
     setIsAdding(true);
-    setTimeout(() => {
-      document.getElementById('main-content')?.scrollTo(0, 0);
-      window.scrollTo(0, 0);
-    }, 10);
+    document.getElementById('main-content')?.scrollTo({ top: 0, behavior: 'instant' });
   };
 
-  const handleDelete = async (id: number, name: string) => {
+  const handleDelete = async (id: number) => {
     if (confirm('Bạn có chắc muốn xóa khách hàng này?')) {
-      const { error } = await supabase.from('customers').delete().eq('id', id);
-      if (error) return alert('Lỗi xóa: ' + error.message);
-      if (user) await supabase.from('logs').insert([{ timestamp: new Date().toISOString(), username: user.username, action: `Xóa khách hàng ${name}` }]);
+      const customer = await db.customers.get(id);
+      await db.customers.delete(id);
+      if (user && customer) await addLog(user.username, `Xóa khách hàng ${customer.name}`);
     }
   };
 
@@ -120,7 +115,7 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {customers.map(c => (
+              {customers?.map(c => (
                 <tr key={c.id} className="bg-white border-b hover:bg-gray-50">
                   <td className="px-6 py-4 font-medium">{c.name}</td>
                   <td className="px-6 py-4">{c.type === 'sỉ' ? 'Sỉ' : 'Lẻ'}</td>
@@ -129,11 +124,11 @@ export default function Customers() {
                   <td className="px-6 py-4">{c.address}</td>
                   <td className="px-6 py-4 text-right space-x-2">
                     <Button variant="outline" size="sm" onClick={() => handleEdit(c)}>Sửa</Button>
-                    <Button variant="destructive" size="sm" onClick={() => c.id && handleDelete(c.id, c.name)}>Xóa</Button>
+                    <Button variant="destructive" size="sm" onClick={() => c.id && handleDelete(c.id)}>Xóa</Button>
                   </td>
                 </tr>
               ))}
-              {customers.length === 0 && (
+              {customers?.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-4 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>

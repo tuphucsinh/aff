@@ -1,14 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { Product } from '../db'; // Giữ lại interface để định dạng dữ liệu
-import { supabase, useSupabaseQuery } from '../supabase'; // Dùng Supabase thay cho Dexie
+import { useSupabaseQuery } from '../supabase';
+import { db, Product, addLog } from '../db';
 import { Button, Input, Label, Card, CardContent, CardHeader, CardTitle } from '../components/ui';
 import { useAuth } from '../AuthContext';
 
 export default function Products() {
   const { user } = useAuth();
-  // Lấy dữ liệu live từ Supabase
-  const products = useSupabaseQuery<Product[]>('products') || [];
-  
+  const products = useSupabaseQuery<Product[]>('products');
   const [isAdding, setIsAdding] = useState(false);
   const [formData, setFormData] = useState<Product>({ 
     name: '', sku: '', unit: '', minStock: 0, currentStock: 0
@@ -17,53 +15,26 @@ export default function Products() {
   const canEdit = user?.role === 'admin' || user?.role === 'warehouse';
 
   const lowStockProducts = useMemo(() => {
-    return products.filter(p => p.currentStock < p.minStock);
+    return products?.filter(p => p.currentStock < p.minStock) || [];
   }, [products]);
 
   const handleSave = async () => {
     if (!formData.name) return alert('Vui lòng nhập tên sản phẩm');
-    
-    // Thêm dữ liệu lên Supabase
-    const { error } = await supabase.from('products').insert([{
-      name: formData.name,
-      sku: formData.sku,
-      unit: formData.unit,
+    await db.products.add({
+      ...formData,
       minStock: Number(formData.minStock),
       currentStock: Number(formData.currentStock),
-    }]);
-
-    if (error) {
-      alert('Lỗi khi lưu lên Supabase: ' + error.message);
-      return;
-    }
-
-    // Tùy chọn: Thêm log lên Supabase nếu bạn có bảng logs
-    if (user) {
-      await supabase.from('logs').insert([{
-        timestamp: new Date().toISOString(),
-        username: user.username,
-        action: `Thêm sản phẩm ${formData.name}`
-      }]);
-    }
-
+    });
+    if (user) await addLog(user.username, `Thêm sản phẩm ${formData.name}`);
     setIsAdding(false);
     setFormData({ name: '', sku: '', unit: '', minStock: 0, currentStock: 0 });
   };
 
   const handleDelete = async (id: number) => {
     if (confirm('Bạn có chắc muốn xóa sản phẩm này?')) {
-      // Xóa dữ liệu trên Supabase
-      const { error } = await supabase.from('products').delete().eq('id', id);
-      
-      if (error) {
-        alert('Lỗi khi xóa: ' + error.message);
-      } else if (user) {
-        await supabase.from('logs').insert([{
-          timestamp: new Date().toISOString(),
-          username: user.username,
-          action: `Xóa sản phẩm ID: ${id}`
-        }]);
-      }
+      const product = await db.products.get(id);
+      await db.products.delete(id);
+      if (user && product) await addLog(user.username, `Xóa sản phẩm ${product.name}`);
     }
   };
 
@@ -78,9 +49,15 @@ export default function Products() {
         )}
       </div>
 
+      {/* Cảnh báo tồn kho */}
       {lowStockProducts.length > 0 && (
         <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
           <div className="flex">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            </div>
             <div className="ml-3">
               <h3 className="text-sm font-medium text-red-800">Cảnh báo tồn kho thấp</h3>
               <div className="mt-2 text-sm text-red-700">
@@ -141,7 +118,7 @@ export default function Products() {
               </tr>
             </thead>
             <tbody>
-              {products.map(p => (
+              {products?.map(p => (
                 <tr key={p.id} className="bg-white border-b hover:bg-gray-50">
                   <td className="px-6 py-4">{p.sku}</td>
                   <td className="px-6 py-4 font-medium">{p.name}</td>
@@ -158,7 +135,7 @@ export default function Products() {
                   )}
                 </tr>
               ))}
-              {products.length === 0 && (
+              {products?.length === 0 && (
                 <tr>
                   <td colSpan={canEdit ? 5 : 4} className="px-6 py-4 text-center text-gray-500">Chưa có dữ liệu</td>
                 </tr>
